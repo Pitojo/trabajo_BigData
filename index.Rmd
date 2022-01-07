@@ -1,11 +1,10 @@
 ---
-title: "Biografia de una Vida"
-subtitle: "José Pineda(pitojo@alumni.uv.es)" #- pongo tú nombre ahí para q aparezca más grande q el de la UV
+title: "Calp dentro de la Marina Alta"
+subtitle: "José Pineda Torres(pitojo@alumni.uv.es)" 
 author: "Universitat de València"
 date: "Diciembre de 2021 (actualizado el `r format(Sys.time(), '%d-%m-%Y')`)"
 output:
   html_document:
-    #css: "./assets/my_css_file.css"
     theme: paper
     highlight: textmate 
     toc: true
@@ -17,6 +16,7 @@ output:
     number_sections: false
     df_print: kable
     code_download: true
+    code_folding: show 
 editor_options: 
   chunk_output_type: console
 ---
@@ -25,6 +25,14 @@ editor_options:
 library(tidyverse)
 library(klippy)  #- remotes::install_github("rlesur/klippy")
 library(knitr)
+library(sf)
+library(ggplot2)
+library(mapSpain)
+library(plotly)
+library(gganimate)
+library(ggthemes)
+library(hrbrthemes)
+library(DT)
 ```
 
 ```{r chunk-setup, include = FALSE}
@@ -62,6 +70,265 @@ La página web de la asignatura y los trabajos de mis compañeros pueden verse [
 
 <hr class="linea-red">
 
-# MI trabajo en R
+# [1. Introducción]{.verdecito}
 
-jajaifhofnao
+
+El objetivo de este trabajo es ver como esta situado mi pueblo natal, Calp, respecto a sus vecinos comarcales **en cuanto a población y a nivel turístico**. 
+
+```{r eval= TRUE}
+
+knitr::include_graphics(here::here("imagenes", "Calpe.png"))
+
+
+```
+
+# 2. Datos
+
+Casi Todos los datos proceden de un portal de la Marina Alta que recoge estadísticas de sus municipios y de la región en general, y cuyo nombre es [Observatorio Marina Alta](https://observatorimarinaalta.org/).
+
+
+# 3. POBLACIÓN EN LA MARINA ALTA
+
+
+En el mapa que se presenta abajo, podemos observar los municipios de la Marina Alta con mayor población. Estos municipios coinciden con los costeros, en los que hay mayor actividad.
+
+```{r, eval = TRUE}
+
+municipios_alicante <-rio::import(here::here("datos", "poblacion.xlsx"))
+
+muni_A <- municipios_alicante %>% filter(year == 2018)
+
+muni <- esp_get_munic(year = "2019", region = "Alicante")
+
+df <- left_join(muni_A, muni, by = c("Ambito geografico" = "name" ))
+
+df <- df %>% rename(municipio = "Ambito geografico")
+
+
+pw<- ggplot(df) + geom_sf(aes(geometry = geometry, fill = Poblacion)) 
+
+p1 <- pw+ scale_fill_viridis_c(option = "ligthgreen", trans = "sqrt") + 
+  labs(title = 'Poblacion La Marina Ala',                                                                      subtitle = "(Por Municipios)",
+       caption = "Datos provenientes de mapSpain (paquete) y observatoriomarinaalta.org",
+       tag = "Mapa municipios")
+
+
+world_points <- cbind(df, st_coordinates(st_centroid(df$geometry, of_largest_polygon = TRUE)))
+
+p2 <- p1 + geom_text(data = world_points, 
+          aes(x = X, y = Y, label = municipio), 
+          color = "white", fontface = "bold", check_overlap = TRUE, size = 2.5) + 
+  labs(y = NULL) +
+  labs(x = NULL)
+
+p2
+
+```
+
+
+## 3.1 Variación poblacional
+
+
+Para mostrarlo hemos elegido los municipios que mayor variación tienen. Por norma general, esta situación se da en verano por la elevada afluencia de turistas que van a pueblos costeros para disfrutar de las vacaciones en la playa. Para bien o para mal, el turismo predominante es la zona es el de Sol y Playa. 
+
+```{r, eval = TRUE}
+pob <- rio::import(here::here("datos", "variacion_poblacional.xlsx"))
+
+var_pob <- pob %>% rename(poblacion_estacional_maxima = "Población Estacional Máxima" , poblacion_empadronada = "Población Empadronada", ambito_geografico = "Ámbito geográfico" ) %>%
+  group_by(`ambito_geografico`) %>%
+  arrange(Año) %>%
+  mutate(tasa_variacion_poblacional = (poblacion_estacional_maxima / poblacion_empadronada)*100) %>%
+  ungroup()
+
+
+pp <- ggplot(var_pob, aes(x = Año, y = tasa_variacion_poblacional, group = ambito_geografico, color=ambito_geografico))+
+  geom_line()+ 
+  geom_point() +
+  ggtitle("Evolución de la tasa de variación poblacional") +
+  theme_ipsum() +
+  scale_x_continuous(breaks=seq(2011,2020,2),limits=c(2011,2020)) + labs(y = NULL,
+                                                                         color = "Ámbito geográfico")
+pp + transition_reveal(Año)
+
+```
+
+### 3.1.1. Variación poblacional de Calp
+
+Para el caso específico de Calp, vemos que la variación de la población llega a un 800%, es decir, que la población es 8 veces mayor que la empadronada. Esto se debe, como ya hemos mencionado a la enorme afluencia de turistas que recibe la costa. No obstante, hay una clara bajada para el año 2020 debido a las restricciones de movilidad y el miedo causado por el COVID-19.
+
+
+```{r, eval = TRUE}
+var_pob_calp <- var_pob %>% filter(`ambito_geografico`== "Calp")
+
+ppob <- ggplot(var_pob_calp, aes(Año, tasa_variacion_poblacional, fill = tasa_variacion_poblacional)) +
+  geom_col() +
+  scale_fill_distiller(palette = "Blues", direction = 1) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    panel.grid.major.y = element_line(color = "white"),
+    panel.ontop = TRUE
+  ) + transition_states(Año, wrap = FALSE) +
+  shadow_mark()
+ppob
+```
+
+
+# 4. PARO EN LA MARINA ALTA
+
+Para este análisis nos centraremos en los principales puntos turísticos de la región.
+
+```{r, eval = TRUE}
+tasa_paro <- rio::import(here::here("datos", "tasa de paro segun actividad.xlsx"))
+
+tasa_paro1 <- tasa_paro %>% select(Periodo, `Ámbito geográfico`, `Tasa de paro total (%)`) %>% 
+  group_by(`Ámbito geográfico`) %>% 
+  arrange(Periodo) %>%
+  mutate(crec_tasa_paro = `Tasa de paro total (%)` - lag(`Tasa de paro total (%)`)) %>% 
+  mutate(crec_tasa_paro_desde_2016 = `Tasa de paro total (%)` - first(`Tasa de paro total (%)`)) %>%
+  ungroup()
+
+DT::datatable(tasa_paro1, filter = 'top', options = list(
+  pageLength = 6, autoWidth = TRUE, caption = htmltools::tags$caption(
+    style = 'caption-side: bottom; text-align: center;',
+    'Table 1: ', htmltools::em('Tasa de paro.')
+  )
+))
+
+```
+
+
+En líneas generales podemos decir que el paro ha descendido en la región por lo que parece ser que se va en la buena dirección. El municipio donde más ha bajado el paro desde 2016 es Jávea, en un -4.96%. No obstante, el paro en España es de un 14,5%, por debajo de los principales municipios de la Marina Alta. En cuanto a Calp, podemos ver que tiene un paro en el tercer trimestre del 2021 del 17.39%, una tasa considerable, ocupando el tercer puesto de los municipios de la tabla.
+
+A continuación vamos a analizar las tasas de paro en el sector servicios y más adelante la de la construcción, los dos secotres claves de la región.
+
+El sector servicios tiene una gran importancia y es el que más demanda tiene, debido a la dependencia del turismo en la zona.
+
+```{r, eval = TRUE}
+tasa_paro2 <- tasa_paro %>% select(Periodo, `Ámbito geográfico`, `Tasa de paro Servicios (%)`) %>%
+  group_by(`Ámbito geográfico`) %>%
+  arrange(Periodo) %>%
+  mutate(crec_tasa_paro_Servicios = `Tasa de paro Servicios (%)` - lag(`Tasa de paro Servicios (%)`)) %>%
+  mutate(crec_tasa_paro_desde_2016_Servicios = `Tasa de paro Servicios (%)` - first(`Tasa de paro Servicios (%)`))  %>%
+  ungroup()
+
+
+DT::datatable(tasa_paro2, filter = 'top', options = list(
+  pageLength = 6, autoWidth = TRUE, caption = htmltools::tags$caption(
+    style = 'caption-side: bottom; text-align: center;',
+    'Tabla 2: ', htmltools::em('Tasa de paro servicios.')
+  )
+))
+```
+
+
+Si nos fijamos únicamente en el sector servicios el municipio que más ha reducido su paro desde 2016 ha sido Calp, con una bajada del 5,06%, buen síntoma de recuperación ya que el paro no dejó de aumentar desde el inicio de la pandemia hasta el segundo trimestre de 2021. Cabe decir que todos los demás municipios han seguido la tendencia.
+
+
+```{r, eval = TRUE}
+tasa_paro3 <- tasa_paro %>% select(Periodo, `Ámbito geográfico`, `Tasa de paro Construcción (%)`) %>%
+  group_by(`Ámbito geográfico`) %>%
+  arrange(Periodo) %>%
+  mutate(crec_tasa_paro_Construcción = `Tasa de paro Construcción (%)` - lag(`Tasa de paro Construcción (%)`)) %>%
+  mutate(crec_tasa_paro_Construcción_desde_2016 = `Tasa de paro Construcción (%)` - first(`Tasa de paro Construcción (%)`)) %>% 
+  ungroup()
+
+DT::datatable(tasa_paro3, filter = 'top', options = list(
+  pageLength = 6, autoWidth = TRUE, caption = htmltools::tags$caption(
+    style = 'caption-side: bottom; text-align: center;',
+    'Tabla 3: ', htmltools::em('Tasa de paro construcción.')
+  )
+))
+```
+
+
+Respecto al sector de la construcción, observamos que también se ha reducido el paro desde 2016 siendo Calp el municipio en el que menos ha descendido y siendo Dénia y Els Poblets en los que la bajada ha sido mayor, de hasta un 9%.
+
+
+El sector de servicios junto con la construcción, son los dos motores de la región debido a que la actividad principal es el turismo, pero puede conllevar problemas de masificación y contaminación. 
+
+El turismo es un sector estratégico, dinámico y esencial en el desarrollo de la Marina Alta. Siendo muy valorado y con una alta calidad de servicio. Este está inmerso en un proceso de mejora constante con la formación, la economía circular y la sostenibilidad ambiental.
+
+
+# 5. Turismo
+
+
+A continuación vamos a tratar de observar que municipio tiene un mayor número de plazas de alojamientos y veremos el porque de la importancia del sector de la construcción y de los servicios.
+
+En el siguiente gráfico se muestra que Calp es el municipio con más plazas de alojamientos aún teniendo menos hoteles que por ejemplo Dénia. Esto quiere decir que Calp es el municipio con más capacidad para albergar turistas de la Marina Alta. Esto supone tener un gran entramado de, ya no hoteles, si no de apartamentos, camping de caravanas y todo tipo de alojamientos.
+
+
+```{r, eval = TRUE}
+
+alojamientos <- rio::import(here::here("datos", "oferta alojamientos turísticos .xlsx"))
+
+alojamientos_1 <- alojamientos %>% rename(num_total_plazas = "Nº Total Plazas") %>%
+  filter(Año == 2020) %>% 
+  select(Año, `Ámbito geográfico`, num_total_plazas) %>% 
+  arrange(desc(num_total_plazas))
+
+df <- alojamientos_1 %>% mutate(`Ámbito geográfico` = forcats::as_factor(`Ámbito geográfico`))
+
+df <- df %>% mutate(`Ámbito geográfico` = forcats::fct_rev(`Ámbito geográfico`))
+
+
+p <- ggplot(df, aes(x = num_total_plazas , y = `Ámbito geográfico` ))
+p + geom_bar(stat = "identity",  fill = "steelblue") +
+    labs(title = "Municipios con más plazas de alojamiento",
+       caption = "Datos provenientes de Observatorio Marina Alta",
+       x = "Plazas Totales",
+       y = "Municipios" )
+
+```
+
+
+## 6. MEJORES PLAYAS
+
+Para ver las mejores playas hemos extendido el análisis a los municipios con playas de la provincia de Alicante, podemos observar que el municipio que más Banderas azules tiene por kilometro de playa es Pilar de la Horadada. Calp, en este ranking está en el puesto número trece.
+
+La Marina Alta se caracteriza por tener unas playas de calidad y limpias, además, también han sido galardonas con premios como los otorgados por la Asociación de Educación Ambiental y del Consumidor (Adeac).
+
+```{r, eval = TRUE}
+
+banderas_azules <- rio::import(here::here("datos", "Municipios costeros banderas azules - Alicante.xlsx"))
+
+BA <- banderas_azules %>% group_by(Municipio) %>%
+  mutate(banderas_azules_por_kilometro = `Banderas Azules 2021`/ `Km. Costa`) %>% 
+  mutate(banderas_por_playa = `Banderas Azules 2021`/ `Número Playas` ) %>%
+  arrange(desc(banderas_azules_por_kilometro)) %>% ungroup()
+
+BA
+
+```
+
+# 7. Conclusiones
+
+La Marina Alta depende del turismo, el cual es el motor de la economía en la region, esto trae consigo un elevado paro estacional que lastra el crecimiento económico, por lo que se debería seguir avanzando hacía un turismo menos de Sol y Playa y más cultural, deportivo, gastronómico, rural y medioambiental.
+
+
+# 4. Bibliografía
+
+[Observatorio Marina Alta](https://observatorimarinaalta.org/) 
+
+[Periódico Levante](https://www.levante-emv.com/marina/2020/03/16/construccion-marina-alta-11594131.html)
+
+[La Marina Plaza](https://lamarinaplaza.com/2020/05/02/es-posible-un-cambio-de-modelo-economico-en-la-marina-alta/)
+
+
+<br><br>
+
+<hr class="linea-red">
+<hr class="linea-red">
+
+
+```{r, echo = FALSE}
+sessioninfo::session_info() %>% details::details(summary = 'Información de mi R-sesión:') 
+```
+
+
+<br><br>
+
+<div class="tocify-extend-page" data-unique="tocify-extend-page" style="height: 0;"></div>
+<br><br>
+
+<div class="tocify-extend-page" data-unique="tocify-extend-page" style="height: 0;"></div>
